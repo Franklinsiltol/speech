@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ferramenta de Análise de Fala</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .container {
+            margin-top: 50px;
+        }
+        .waveform {
+            margin: 20px 0;
+        }
+        .cloud, .insights, .ranking {
+            margin-top: 30px;
+        }
+        .highlight-positive {
+            color: green;
+            font-weight: bold;
+        }
+        .highlight-negative {
+            color: red;
+            font-weight: bold;
+        }
+        #wordCloudCanvas {
+            border: 1px solid #ccc;
+            width: 100%;
+            height: 300px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1 class="text-center">Ferramenta de Análise de Fala</h1>
+
+    <div class="row">
+        <div class="col-md-6">
+            <label for="positiveWords">Palavras Positivas (separadas por vírgula)</label>
+            <input type="text" id="positiveWords" class="form-control" placeholder="Ex: bom, ótimo, excelente">
+        </div>
+        <div class="col-md-6">
+            <label for="negativeWords">Palavras Negativas (separadas por vírgula)</label>
+            <input type="text" id="negativeWords" class="form-control" placeholder="Ex: ruim, péssimo, horrível">
+        </div>
+    </div>
+
+    <div class="row mt-3">
+        <div class="col-md-12">
+            <button id="startRecording" class="btn btn-primary">Iniciar Gravação</button>
+            <button id="stopRecording" class="btn btn-danger" disabled>Parar Gravação</button>
+        </div>
+    </div>
+
+    <div class="row transcription">
+        <div class="col-md-12">
+            <h3>Transcrição</h3>
+            <div id="transcriptionText" class="p-3 border bg-light"></div>
+        </div>
+    </div>
+
+    <div class="row cloud">
+        <div class="col-md-12">
+            <h3>Nuvem de Palavras</h3>
+            <canvas id="wordCloudCanvas"></canvas>
+        </div>
+    </div>
+
+    <div class="row ranking">
+        <div class="col-md-6">
+            <h3>Ranking de Palavras Positivas</h3>
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Palavra</th>
+                        <th>Ocorrências</th>
+                    </tr>
+                </thead>
+                <tbody id="positiveRankingTableBody"></tbody>
+            </table>
+        </div>
+        <div class="col-md-6">
+            <h3>Ranking de Palavras Negativas</h3>
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Palavra</th>
+                        <th>Ocorrências</th>
+                    </tr>
+                </thead>
+                <tbody id="negativeRankingTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="row mt-3">
+        <div class="col-md-12 text-center">
+            <button id="downloadData" class="btn btn-success">Baixar Dados</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// IndexedDB setup
+let db;
+const request = indexedDB.open('SpeechAnalyticsDB', 1);
+
+request.onupgradeneeded = function(event) {
+    db = event.target.result;
+    db.createObjectStore('transcriptions', { keyPath: 'id', autoIncrement: true });
+};
+
+request.onsuccess = function(event) {
+    db = event.target.result;
+};
+
+request.onerror = function(event) {
+    console.error('Erro ao abrir IndexedDB', event);
+};
+
+// Web Speech API setup for transcription via microphone in Portuguese
+const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+recognition.continuous = false;
+recognition.interimResults = false;
+recognition.lang = 'pt-BR';
+
+let isRecording = false;
+let fullTranscription = '';
+
+// Função para começar a gravação
+document.getElementById('startRecording').addEventListener('click', function() {
+    isRecording = true;
+    fullTranscription = '';  // Limpa a transcrição anterior
+    recognition.start();
+    document.getElementById('startRecording').disabled = true;
+    document.getElementById('stopRecording').disabled = false;
+});
+
+// Função para parar a gravação
+document.getElementById('stopRecording').addEventListener('click', function() {
+    isRecording = false;
+    recognition.stop();
+    document.getElementById('startRecording').disabled = false;
+    document.getElementById('stopRecording').disabled = true;
+});
+
+// Quando o reconhecimento de fala obtém resultados
+recognition.onresult = function(event) {
+    for (let i = 0; i < event.results.length; i++) {
+        fullTranscription += event.results[i][0].transcript + ' ';
+    }
+
+    const positiveWords = document.getElementById('positiveWords').value.split(',').map(word => word.trim().toLowerCase());
+    const negativeWords = document.getElementById('negativeWords').value.split(',').map(word => word.trim().toLowerCase());
+
+    const highlightedTranscription = highlightWords(fullTranscription, positiveWords, negativeWords);
+    document.getElementById('transcriptionText').innerHTML = highlightedTranscription;
+
+    // Armazenar transcrição no IndexedDB
+    const transaction = db.transaction(['transcriptions'], 'readwrite');
+    const store = transaction.objectStore('transcriptions');
+    store.add({ text: fullTranscription });
+
+    transaction.oncomplete = function() {
+        console.log('Transcrição salva no IndexedDB');
+        analyzeTranscription(fullTranscription);
+    };
+};
+
+// Se a gravação parar automaticamente por conta do silêncio, reiniciamos a gravação
+recognition.onend = function() {
+    if (isRecording) {
+        recognition.start();
+    }
+};
+
+// Função para destacar as palavras positivas e negativas
+function highlightWords(transcription, positiveWords, negativeWords) {
+    return transcription.split(' ').map(word => {
+        const lowerCaseWord = word.toLowerCase();
+        if (positiveWords.includes(lowerCaseWord)) {
+            return `<span class="highlight-positive">${word}</span>`;
+        } else if (negativeWords.includes(lowerCaseWord)) {
+            return `<span class="highlight-negative">${word}</span>`;
+        } else {
+            return word;
+        }
+    }).join(' ');
+}
+
+// Handle transcription result and analyze
+function analyzeTranscription(transcription) {
+    const words = transcription.split(/\s+/);
+    const wordCount = {};
+
+    // Contar as ocorrências de palavras
+    words.forEach(word => {
+        word = word.toLowerCase();
+        if (wordCount[word]) {
+            wordCount[word]++;
+        } else {
+            wordCount[word] = 1;
+        }
+    });
+
+    const positiveWords = document.getElementById('positiveWords').value.split(',').map(word => word.trim().toLowerCase());
+    const negativeWords = document.getElementById('negativeWords').value.split(',').map(word => word.trim().toLowerCase());
+
+    // Gerar nuvem de palavras (usando o canvas)
+    generateWordCloud(wordCount, positiveWords, negativeWords);
+
+    // Gerar ranking de palavras
+    generateWordRanking(wordCount, positiveWords, negativeWords);
+}
+
+// Gerar a nuvem de palavras com cores para palavras positivas e negativas
+function generateWordCloud(wordCount, positiveWords, negativeWords) {
+    const canvas = document.getElementById('wordCloudCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    let x = 50;
+    let y = 50;
+
+    for (const [word, count] of Object.entries(wordCount)) {
+        const fontSize = count * 10;
+        if (positiveWords.includes(word)) {
+            ctx.fillStyle = 'green';
+        } else if (negativeWords.includes(word)) {
+            ctx.fillStyle = 'red';
+        } else {
+            ctx.fillStyle = 'black';
+        }
+        ctx.font = `${fontSize}px Arial`;
+        ctx.fillText(word, x, y);
+        x += fontSize * 2;
+        if (x > canvas.width - fontSize * 2) {x = 50;
+            y += fontSize * 2;
+        }
+        if (y > canvas.height - fontSize * 2) {
+            break; // Se atingir o final da área visível, para de desenhar
+        }
+    }
+}
+
+// Gerar o ranking de palavras positivas e negativas
+function generateWordRanking(wordCount, positiveWords, negativeWords) {
+    const positiveRankingTableBody = document.getElementById('positiveRankingTableBody');
+    const negativeRankingTableBody = document.getElementById('negativeRankingTableBody');
+    
+    positiveRankingTableBody.innerHTML = '';
+    negativeRankingTableBody.innerHTML = '';
+
+    // Filtros e ordenação das palavras positivas e negativas
+    const positiveWordCount = Object.entries(wordCount).filter(([word]) => positiveWords.includes(word));
+    const negativeWordCount = Object.entries(wordCount).filter(([word]) => negativeWords.includes(word));
+
+    positiveWordCount.sort((a, b) => b[1] - a[1]);
+    negativeWordCount.sort((a, b) => b[1] - a[1]);
+
+    // Preencher tabela de palavras positivas
+    positiveWordCount.forEach(([word, count]) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td class="highlight-positive">${word}</td><td>${count}</td>`;
+        positiveRankingTableBody.appendChild(row);
+    });
+
+    // Preencher tabela de palavras negativas
+    negativeWordCount.forEach(([word, count]) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td class="highlight-negative">${word}</td><td>${count}</td>`;
+        negativeRankingTableBody.appendChild(row);
+    });
+}
+
+// Função para baixar os dados (transcrição e rankings) em um arquivo .txt
+document.getElementById('downloadData').addEventListener('click', function() {
+    const positiveWords = document.getElementById('positiveWords').value;
+    const negativeWords = document.getElementById('negativeWords').value;
+    const transcription = fullTranscription.trim();
+
+    const positiveRanking = Array.from(document.querySelectorAll('#positiveRankingTableBody tr')).map(row => {
+        const word = row.children[0].innerText;
+        const count = row.children[1].innerText;
+        return `${word}: ${count}`;
+    }).join('\n');
+
+    const negativeRanking = Array.from(document.querySelectorAll('#negativeRankingTableBody tr')).map(row => {
+        const word = row.children[0].innerText;
+        const count = row.children[1].innerText;
+        return `${word}: ${count}`;
+    }).join('\n');
+
+    const data = `
+    Transcrição:
+    ${transcription}
+
+    Palavras Positivas:
+    ${positiveWords}
+
+    Palavras Negativas:
+    ${negativeWords}
+
+    Ranking de Palavras Positivas:
+    ${positiveRanking}
+
+    Ranking de Palavras Negativas:
+    ${negativeRanking}
+    `;
+
+    const blob = new Blob([data], { type: 'text/plain' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'speech_analytics_dados.txt';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+});
+
+</script>
+</body>
+</html>
