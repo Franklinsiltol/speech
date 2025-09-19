@@ -31,6 +31,25 @@
             width: 100%;
             height: 300px;
         }
+        .upload-section {
+            background-color: #e9ecef;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .recording-section {
+            background-color: #fff3cd;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .audio-player {
+            margin: 15px 0;
+        }
+        .processing-status {
+            margin: 10px 0;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -49,10 +68,32 @@
         </div>
     </div>
 
-    <div class="row mt-3">
-        <div class="col-md-12">
-            <button id="startRecording" class="btn btn-primary">Iniciar Gravação</button>
-            <button id="stopRecording" class="btn btn-danger" disabled>Parar Gravação</button>
+    <!-- Seção de Upload de Arquivo -->
+    <div class="upload-section">
+        <h4>📁 Upload de Gravação</h4>
+        <div class="row">
+            <div class="col-md-8">
+                <input type="file" id="audioFileInput" class="form-control-file" accept="audio/*">
+                <small class="form-text text-muted">Formatos suportados: MP3, WAV, M4A, OGG</small>
+            </div>
+            <div class="col-md-4">
+                <button id="processAudioFile" class="btn btn-info" disabled>Processar Arquivo</button>
+            </div>
+        </div>
+        <div id="uploadedAudioPlayer" class="audio-player" style="display: none;">
+            <audio controls style="width: 100%;"></audio>
+        </div>
+        <div id="processingStatus" class="processing-status"></div>
+    </div>
+
+    <!-- Seção de Gravação ao Vivo -->
+    <div class="recording-section">
+        <h4>🎤 Gravação ao Vivo</h4>
+        <div class="row">
+            <div class="col-md-12">
+                <button id="startRecording" class="btn btn-primary">Iniciar Gravação</button>
+                <button id="stopRecording" class="btn btn-danger" disabled>Parar Gravação</button>
+            </div>
         </div>
     </div>
 
@@ -131,6 +172,130 @@ recognition.lang = 'pt-BR';
 let isRecording = false;
 let fullTranscription = '';
 
+// === FUNCIONALIDADE DE UPLOAD DE ARQUIVO ===
+
+// Habilitar botão quando arquivo for selecionado
+document.getElementById('audioFileInput').addEventListener('change', function(event) {
+    const file = event.target.files[0];
+    const processButton = document.getElementById('processAudioFile');
+    const audioPlayer = document.getElementById('uploadedAudioPlayer');
+    const audio = audioPlayer.querySelector('audio');
+    
+    if (file) {
+        processButton.disabled = false;
+        
+        // Mostrar player de áudio
+        const audioURL = URL.createObjectURL(file);
+        audio.src = audioURL;
+        audioPlayer.style.display = 'block';
+        
+        // Limpar status anterior
+        document.getElementById('processingStatus').innerHTML = '';
+    } else {
+        processButton.disabled = true;
+        audioPlayer.style.display = 'none';
+    }
+});
+
+// Processar arquivo de áudio
+document.getElementById('processAudioFile').addEventListener('click', function() {
+    const fileInput = document.getElementById('audioFileInput');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        alert('Por favor, selecione um arquivo de áudio.');
+        return;
+    }
+    
+    processAudioFile(file);
+});
+
+function processAudioFile(file) {
+    const statusDiv = document.getElementById('processingStatus');
+    statusDiv.innerHTML = '<div class="alert alert-info">🔄 Processando arquivo de áudio...</div>';
+    
+    // Criar um elemento de áudio temporário para processar o arquivo
+    const audio = new Audio();
+    const audioURL = URL.createObjectURL(file);
+    audio.src = audioURL;
+    
+    // Usar Web Speech API com MediaStream do arquivo
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        try {
+            // Criar um contexto de áudio para processar o arquivo
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const fileReader = new FileReader();
+            
+            fileReader.onload = function(e) {
+                audioContext.decodeAudioData(e.target.result)
+                    .then(audioBuffer => {
+                        // Simular transcrição (em um ambiente real, você usaria um serviço de transcrição)
+                        statusDiv.innerHTML = '<div class="alert alert-warning">⚠️ Nota: A transcrição de arquivos requer integração com serviços externos como Google Speech-to-Text ou Azure Speech Services. Por enquanto, você pode inserir a transcrição manualmente abaixo.</div>';
+                        
+                        // Adicionar campo para transcrição manual
+                        const manualTranscriptionDiv = document.createElement('div');
+                        manualTranscriptionDiv.innerHTML = `
+                            <div class="mt-3">
+                                <label for="manualTranscription">Transcrição Manual:</label>
+                                <textarea id="manualTranscription" class="form-control" rows="4" placeholder="Cole ou digite a transcrição do arquivo de áudio aqui..."></textarea>
+                                <button id="processManualTranscription" class="btn btn-primary mt-2">Processar Transcrição</button>
+                            </div>
+                        `;
+                        statusDiv.appendChild(manualTranscriptionDiv);
+                        
+                        // Processar transcrição manual
+                        document.getElementById('processManualTranscription').addEventListener('click', function() {
+                            const manualText = document.getElementById('manualTranscription').value.trim();
+                            if (manualText) {
+                                fullTranscription = manualText;
+                                processTranscription(manualText);
+                                statusDiv.innerHTML = '<div class="alert alert-success">✅ Transcrição processada com sucesso!</div>';
+                            } else {
+                                alert('Por favor, insira a transcrição.');
+                            }
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Erro ao decodificar áudio:', error);
+                        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Erro ao processar o arquivo de áudio. Verifique se o formato é suportado.</div>';
+                    });
+            };
+            
+            fileReader.onerror = function() {
+                statusDiv.innerHTML = '<div class="alert alert-danger">❌ Erro ao ler o arquivo.</div>';
+            };
+            
+            fileReader.readAsArrayBuffer(file);
+            
+        } catch (error) {
+            console.error('Erro no processamento:', error);
+            statusDiv.innerHTML = '<div class="alert alert-danger">❌ Erro ao processar o arquivo. Tente com outro formato.</div>';
+        }
+    } else {
+        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Seu navegador não suporta reconhecimento de fala.</div>';
+    }
+}
+
+function processTranscription(transcription) {
+    const positiveWords = document.getElementById('positiveWords').value.split(',').map(word => word.trim().toLowerCase());
+    const negativeWords = document.getElementById('negativeWords').value.split(',').map(word => word.trim().toLowerCase());
+
+    const highlightedTranscription = highlightWords(transcription, positiveWords, negativeWords);
+    document.getElementById('transcriptionText').innerHTML = highlightedTranscription;
+
+    // Armazenar transcrição no IndexedDB
+    const transaction = db.transaction(['transcriptions'], 'readwrite');
+    const store = transaction.objectStore('transcriptions');
+    store.add({ text: transcription, source: 'uploaded_file', timestamp: new Date() });
+
+    transaction.oncomplete = function() {
+        console.log('Transcrição salva no IndexedDB');
+        analyzeTranscription(transcription);
+    };
+}
+
+// === FUNCIONALIDADE DE GRAVAÇÃO AO VIVO (CÓDIGO ORIGINAL) ===
+
 // Função para começar a gravação
 document.getElementById('startRecording').addEventListener('click', function() {
     isRecording = true;
@@ -163,7 +328,7 @@ recognition.onresult = function(event) {
     // Armazenar transcrição no IndexedDB
     const transaction = db.transaction(['transcriptions'], 'readwrite');
     const store = transaction.objectStore('transcriptions');
-    store.add({ text: fullTranscription });
+    store.add({ text: fullTranscription, source: 'live_recording', timestamp: new Date() });
 
     transaction.oncomplete = function() {
         console.log('Transcrição salva no IndexedDB');
@@ -178,10 +343,12 @@ recognition.onend = function() {
     }
 };
 
+// === FUNÇÕES COMPARTILHADAS ===
+
 // Função para destacar as palavras positivas e negativas
 function highlightWords(transcription, positiveWords, negativeWords) {
     return transcription.split(' ').map(word => {
-        const lowerCaseWord = word.toLowerCase();
+        const lowerCaseWord = word.toLowerCase().replace(/[^\w]/g, ''); // Remove pontuação
         if (positiveWords.includes(lowerCaseWord)) {
             return `<span class="highlight-positive">${word}</span>`;
         } else if (negativeWords.includes(lowerCaseWord)) {
@@ -199,10 +366,10 @@ function analyzeTranscription(transcription) {
 
     // Contar as ocorrências de palavras
     words.forEach(word => {
-        word = word.toLowerCase();
-        if (wordCount[word]) {
+        word = word.toLowerCase().replace(/[^\w]/g, ''); // Remove pontuação
+        if (word && wordCount[word]) {
             wordCount[word]++;
-        } else {
+        } else if (word) {
             wordCount[word] = 1;
         }
     });
@@ -227,7 +394,7 @@ function generateWordCloud(wordCount, positiveWords, negativeWords) {
     let y = 50;
 
     for (const [word, count] of Object.entries(wordCount)) {
-        const fontSize = count * 10;
+        const fontSize = Math.min(count * 10, 40); // Limita o tamanho máximo
         if (positiveWords.includes(word)) {
             ctx.fillStyle = 'green';
         } else if (negativeWords.includes(word)) {
@@ -238,7 +405,8 @@ function generateWordCloud(wordCount, positiveWords, negativeWords) {
         ctx.font = `${fontSize}px Arial`;
         ctx.fillText(word, x, y);
         x += fontSize * 2;
-        if (x > canvas.width - fontSize * 2) {x = 50;
+        if (x > canvas.width - fontSize * 2) {
+            x = 50;
             y += fontSize * 2;
         }
         if (y > canvas.height - fontSize * 2) {
